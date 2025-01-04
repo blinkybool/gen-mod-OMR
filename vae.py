@@ -181,7 +181,7 @@ class VAE(eqx.Module):
 
 def compute_loss(
     model: VAE, key: PRNGKeyArray, x: Float[Array, "1 28 28"]
-) -> float:
+) -> Float[Array, ""]:
     """
     VAE loss function = reconstruction loss + KL divergence
     - Reconstruction measures how well we can rebuild the input
