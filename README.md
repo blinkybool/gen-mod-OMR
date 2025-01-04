@@ -37,6 +37,7 @@ uv run train_vae.py # see Usage
 
 Requires wandb login.
 
+
 ```bash
 uv run wandb login
 ```
