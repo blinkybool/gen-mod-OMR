@@ -18,6 +18,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, PRNGKeyArray
+from pathlib import Path
 
 import mattplotlib as mp
 
@@ -151,7 +152,7 @@ class VAE(eqx.Module):
         z = jax.random.normal(key, (num_samples, self.latent_dim))
         return jax.vmap(self.decoder)(z)
 
-    def save(self, filename: str):
+    def save(self, filename: Path):
         """Save model hyperparameters and weights to a file"""
         with open(filename, "wb") as f:
             # Save hyperparameters as JSON

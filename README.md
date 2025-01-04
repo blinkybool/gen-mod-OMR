@@ -16,6 +16,16 @@ On Windows:
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
+## Install dependencies
+
+```bash
+uv sync
+# on TPU
+uv run pip install jax[tpu] --find-links https://storage.googleapis.com/jax-releases/libtpu_releases.html
+# on CPU (not tested)
+uv run pip install jax
+```
+
 ```bash
 # Download dataset
 curl https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz --output mnist.npz
@@ -24,19 +34,26 @@ uv run train_vae.py # see Usage
 ```
 
 ## Usage
+
+Requires wandb login.
+
+```bash
+uv run wandb login
+```
+
 Train a Variational Autoencoder:
 ```bash
 # Basic training
 uv run train_vae.py
 
 # Configure hyperparameters
-uv run train_vae.py --latent-dim 32 --learning-rate 0.001 --batch-size 64 --num-epochs 50 --batches-per-visual 20 --checkpoint-every 1 --seed 42
+uv run train_vae.py --output-folder runs/vae --latent-dim 32 --learning-rate 0.001 --batch-size 64 --num-epochs 50 --num-vis-samples 10 --seed 42 --wandb-project vae-mnist
 
 # Generate samples from trained model
-uv run gen_vae.py --model-path models/vae_final_latent20_lr0.001_batch128.eqx
+uv run gen_vae.py --model-path runs/vae/<run_id>/vae_final.eqx
 
 # Generate interpolations between random points
-uv run gen_vae.py --model-path models/vae_final_latent20_lr0.001_batch128.eqx --mode interpolate
+uv run gen_vae.py --model-path runs/vae/<run_id>/vae_final.eqx --mode interpolate
 ```
 
 ## Investigation ideas

@@ -2,6 +2,7 @@
 dead-simple terminal plotting library by matt.
 """
 
+from typing import List, Tuple, Optional, Union
 import numpy as np
 import einops
 
@@ -16,7 +17,7 @@ class plot:
     Provides methods for converting to a string, along with operations
     for horizontal (&) and vertical (^) stacking.
     """
-    def __init__(self, height: int, width: int, lines: list[str]):
+    def __init__(self, height: int, width: int, lines: List[str]):
         self.height = height
         self.width = width
         self.lines = lines
@@ -94,9 +95,9 @@ class scatter(plot):
         data: np.ndarray, # float[n, 2]
         height: int = 10,
         width: int = 30,
-        yrange: tuple[float, float] | None = None,
-        xrange: tuple[float, float] | None = None,
-        color: np.ndarray | None = None,            # float[3] (rgb 0 to 1)
+        yrange: Optional[Tuple[float, float]] = None,
+        xrange: Optional[Tuple[float, float]] = None,
+        color: Optional[np.ndarray] = None,            # float[3] (rgb 0 to 1)
         check_bounds: bool = False,
     ):
         # todo: check shape
@@ -336,8 +337,8 @@ class center(plot):
     def __init__(
         self,
         plot: plot,
-        height: int | None = None,
-        width: int | None = None,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
     ):
         height = plot.height if height is None else max(height, plot.height)
         width = plot.width if width is None else max(width, plot.width)
@@ -560,8 +561,8 @@ def braille_encode(a):
 
 
 def switch_color(
-    fg: np.ndarray | None = None, # float[3] (rgb 0 to 1)
-    bg: np.ndarray | None = None, # float[3] (rgb 0 to 1)
+    fg: Optional[np.ndarray] = None, # float[3] (rgb 0 to 1)
+    bg: Optional[np.ndarray] = None, # float[3] (rgb 0 to 1)
 ) -> str:
     """
     ANSI control code that switches string color into the given fg and bg
@@ -598,11 +599,11 @@ if __name__ == "__main__":
     plot = (
         border(
             center(text("G'day mattplotlib"), height=3, width=46),
-            style=border.Style.DOUBLE,
+            style=border.Style['DOUBLE'],
         )
         ^ border(
             text("uniform:")  ^ image(u, colormap=reds),
-            style=border.Style.LIGHT,
+            style=border.Style['LIGHT'],
         )
         & border(
             text("identity:") ^ image(i, colormap=greens),
