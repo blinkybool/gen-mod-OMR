@@ -21,45 +21,33 @@ from jaxtyping import Array, Float, PRNGKeyArray
 
 import mattplotlib as mp
 
-
 class Encoder(eqx.Module):
     """
     Neural network that learns to encode data x into approximate posterior q(z|x).
     Returns mean and log-variance of the latent Gaussian distribution.
     """
-
-    conv1: eqx.nn.Conv2d
-    conv2: eqx.nn.Conv2d
+    conv1: eqx.nn.Conv2d  # 28x28 -> 14x14
+    conv2: eqx.nn.Conv2d  # 14x14 -> 7x7
+    conv3: eqx.nn.Conv2d  # 7x7 -> 7x7 (same padding)
     fc_mu: eqx.nn.Linear
     fc_logvar: eqx.nn.Linear
 
     def __init__(self, latent_dim: int, key: PRNGKeyArray):
-        keys = jax.random.split(key, 4)
-        self.conv1 = eqx.nn.Conv2d(
-            in_channels=1,
-            out_channels=32,
-            kernel_size=3,
-            stride=2,
-            padding=1,
-            key=keys[0],
-        )
-        self.conv2 = eqx.nn.Conv2d(
-            in_channels=32,
-            out_channels=64,
-            kernel_size=3,
-            stride=2,
-            padding=1,
-            key=keys[1],
-        )
-        self.fc_mu = eqx.nn.Linear(64 * 7 * 7, latent_dim, key=keys[2])
-        self.fc_logvar = eqx.nn.Linear(64 * 7 * 7, latent_dim, key=keys[3])
+        keys = jax.random.split(key, 5)
+        # Input: 1x28x28
+        self.conv1 = eqx.nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1, key=keys[0])  # -> 32x14x14
+        self.conv2 = eqx.nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, key=keys[1])  # -> 64x7x7
+        self.conv3 = eqx.nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1, key=keys[2])  # -> 128x7x7
 
-    def __call__(
-        self, x: Float[Array, "1 28 28"]
-    ) -> Tuple[Float[Array, " lat"], Float[Array, " lat"]]:
-        x = jax.nn.relu(self.conv1(x))
-        x = jax.nn.relu(self.conv2(x))
-        x = einops.rearrange(x, "c h w -> (c h w)")
+        # 128 * 7 * 7 = 6272 features
+        self.fc_mu = eqx.nn.Linear(128 * 7 * 7, latent_dim, key=keys[3])
+        self.fc_logvar = eqx.nn.Linear(128 * 7 * 7, latent_dim, key=keys[4])
+
+    def __call__(self, x):
+        x = jax.nn.relu(self.conv1(x))  # 1x28x28 -> 32x14x14
+        x = jax.nn.relu(self.conv2(x))  # 32x14x14 -> 64x7x7
+        x = jax.nn.relu(self.conv3(x))  # 64x7x7 -> 128x7x7
+        x = einops.rearrange(x, "c h w -> (c h w)")  # 128x7x7 -> 6272
         return self.fc_mu(x), self.fc_logvar(x)
 
 
@@ -68,7 +56,6 @@ class Decoder(eqx.Module):
     Neural network that learns to decode latent variables z back into data space.
     Reconstructs input x through deconvolution operations.
     """
-
     fc: eqx.nn.Linear
     deconv1: eqx.nn.ConvTranspose2d
     deconv2: eqx.nn.ConvTranspose2d
@@ -76,38 +63,48 @@ class Decoder(eqx.Module):
 
     def __init__(self, latent_dim: int, key: PRNGKeyArray):
         keys = jax.random.split(key, 4)
-        self.fc = eqx.nn.Linear(latent_dim, 64 * 7 * 7, key=keys[0])
+        self.fc = eqx.nn.Linear(latent_dim, 128 * 7 * 7, key=keys[0])
+
+        # For transposed convolution:
+        # output_size = (input_size - 1) * stride - 2 * padding + kernel_size + output_padding
+
         self.deconv1 = eqx.nn.ConvTranspose2d(
-            in_channels=64,
-            out_channels=32,
-            kernel_size=4,
-            stride=2,
-            padding=1,
-            key=keys[1],
-        )
-        self.deconv2 = eqx.nn.ConvTranspose2d(
-            in_channels=32,
-            out_channels=16,
-            kernel_size=4,
-            stride=2,
-            padding=1,
-            key=keys[2],
-        )
-        self.deconv3 = eqx.nn.ConvTranspose2d(
-            in_channels=16,
-            out_channels=1,
+            128, 64,
             kernel_size=3,
             stride=1,
-            padding=1,
-            key=keys[3],
-        )
+            padding=1,  # Same padding
+            key=keys[1]
+        )  # 7x7 -> 7x7
 
-    def __call__(self, z: Float[Array, " lat"]) -> Float[Array, " 1 28 28"]:
+        self.deconv2 = eqx.nn.ConvTranspose2d(
+            64, 32,
+            kernel_size=2,  # Changed kernel size
+            stride=2,
+            padding=0,  # No padding needed
+            key=keys[2]
+        )   # 7x7 -> 14x14
+
+        self.deconv3 = eqx.nn.ConvTranspose2d(
+            32, 1,
+            kernel_size=2,  # Changed kernel size
+            stride=2,
+            padding=0,  # No padding needed
+            key=keys[3]
+        )    # 14x14 -> 28x28
+
+    def __call__(self, z):
         x = jax.nn.relu(self.fc(z))
-        x = einops.rearrange(x, "(c h w) -> c h w", c=64, h=7, w=7)
-        x = jax.nn.relu(self.deconv1(x))
-        x = jax.nn.relu(self.deconv2(x))
-        x = jax.nn.sigmoid(self.deconv3(x))
+        x = einops.rearrange(x, "(c h w) -> c h w", c=128, h=7, w=7)
+
+        x = jax.nn.relu(self.deconv1(x))  # 128x7x7 -> 64x7x7
+        assert x.shape == (64, 7, 7), f"Expected (64, 7, 7), got {x.shape}"
+
+        x = jax.nn.relu(self.deconv2(x))  # 64x7x7 -> 32x14x14
+        assert x.shape == (32, 14, 14), f"Expected (32, 14, 14), got {x.shape}"
+
+        x = jax.nn.sigmoid(self.deconv3(x))  # 32x14x14 -> 1x28x28
+        assert x.shape == (1, 28, 28), f"Expected (1, 28, 28), got {x.shape}"
+
         return x
 
 
