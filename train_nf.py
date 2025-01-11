@@ -24,7 +24,7 @@ def configure_platform():
         pass
 
 def main(
-    n_layers: int = 4,
+    n_layers: int = 8,
     learning_rate: float = 3e-4,
     batch_size: int = 256,
     num_epochs: int = 50,

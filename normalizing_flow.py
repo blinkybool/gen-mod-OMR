@@ -35,7 +35,7 @@ class ConvNet(eqx.Module):
         scale, shift = jnp.split(x, 2)
         scale = scale.reshape(28, 28)
         shift = shift.reshape(28, 28)
-        scale = jnp.tanh(scale)
+        scale = 2 * jnp.tanh(scale/2)  # Clamps scale factors to [-1,1] more gradually
         return scale, shift
 
 class CouplingLayer(eqx.Module):
