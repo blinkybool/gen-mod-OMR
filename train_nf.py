@@ -1,5 +1,4 @@
 from pathlib import Path
-
 import einops
 import equinox as eqx
 import jax
@@ -7,25 +6,18 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 import tqdm
-
 import wandb
 from normalizing_flow import NormalizingFlow
 
-
-def get_platform():
-    return jax.default_backend()
-
-def configure_platform():
-    platform = get_platform()
-    if platform == "tpu":
-        print("Using jax TPU")
-        jax.config.update("jax_enable_x64", False)
-    else:
-        pass
+@jax.jit
+def generate_reconstruction_images(model, batch):
+    # For NF, reconstruction means forward then inverse
+    z, _ = model.forward(batch)
+    return model.inverse(z)
 
 def main(
     n_layers: int = 8,
-    learning_rate: float = 3e-4,
+    learning_rate: float = 1e-4,  # Slightly lower learning rate
     batch_size: int = 256,
     num_epochs: int = 50,
     num_vis_samples: int = 10,
@@ -34,7 +26,6 @@ def main(
     wandb_project: str = "nf-mnist",
     wandb_entity: str | None = None,
 ):
-    configure_platform()
     output_folder.mkdir(parents=True, exist_ok=True)
     Path("wandb").mkdir(exist_ok=True)
 
@@ -60,6 +51,11 @@ def main(
         with np.load("mnist.npz") as data:
             x_train = jnp.array(data["x_train"].astype("float32") / 255.0)
             x_test = jnp.array(data["x_test"].astype("float32") / 255.0)
+
+        # Scale to [-1, 1] instead of [0, 1]
+        x_train = 2 * x_train - 1
+        x_test = 2 * x_test - 1
+
         x_train = einops.rearrange(x_train, "b h w -> b 1 h w")
         x_test = einops.rearrange(x_test, "b h w -> b 1 h w")
 
@@ -112,22 +108,40 @@ def main(
                 epoch_losses.append(float(loss))
                 pbar.set_postfix({"loss": f"{float(loss):.4f}"})
 
-            # Log epoch-level metrics and images
             avg_epoch_loss = sum(epoch_losses) / len(epoch_losses)
             val_loss = compute_batch_loss(model, x_test)
 
-            # Generate samples
+            # Generate reconstructions
+            vis_batch = x_train_shuffled[:num_vis_samples]
+            recons = generate_reconstruction_images(model, vis_batch)
+
+            # Generate random samples
             key, sample_key = jax.random.split(key)
             samples = model.sample(
                 sample_key,
                 shape=(num_vis_samples, 1, 28, 28)
             )
 
+            # Scale back to [0,1] for visualization
+            recons = (recons + 1) / 2
+            samples = (samples + 1) / 2
+            vis_batch = (vis_batch + 1) / 2  # Don't forget original images
+
             wandb.log({
                 "epoch/train_loss": avg_epoch_loss,
                 "epoch/val_loss": float(val_loss),
                 "epoch": epoch,
-                "samples": [
+                "reconstructions (left: original, right: reconstruction)": [
+                    wandb.Image(
+                        np.hstack([
+                            np.array(orig.squeeze()),
+                            np.ones((28, 4)),
+                            np.array(recon.squeeze())
+                        ])
+                    )
+                    for orig, recon in zip(vis_batch, recons)
+                ],
+                "generated": [
                     wandb.Image(np.array(img.squeeze()))
                     for img in samples
                 ],
@@ -143,7 +157,6 @@ def main(
             )
             artifact.add_file(str(checkpoint_path))
             run.log_artifact(artifact)
-            wandb.save(str(checkpoint_path))
 
         final_path = run_dir / "nf_final.eqx"
         model.save(final_path)

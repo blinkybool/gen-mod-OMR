@@ -3,12 +3,10 @@ normalizing_flow.py
 A simple normalizing flow implementation focused on image generation.
 Uses RealNVP-style coupling layers but simplified for MNIST.
 """
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PRNGKeyArray
-
 
 class ConvNet(eqx.Module):
     """Simple ConvNet for the coupling transforms"""
@@ -23,31 +21,39 @@ class ConvNet(eqx.Module):
         self.conv1 = eqx.nn.Conv2d(min_channels, 32, 3, padding=1, key=keys[0])
         self.conv2 = eqx.nn.Conv2d(32, 32, 3, padding=1, key=keys[1])
         self.conv3 = eqx.nn.Conv2d(32, 32, 3, padding=1, key=keys[2])
-        self.final = eqx.nn.Linear(32, 28 * 28 * 2, key=keys[3])
+        self.final = eqx.nn.Linear(32 * 28 * 28, 28 * 28 * 2, key=keys[3])
 
     def __call__(self, x):
         # Single example, shape (C,H,W)
         x = jax.nn.relu(self.conv1(x))
         x = jax.nn.relu(self.conv2(x))
         x = jax.nn.relu(self.conv3(x))
-        x = jnp.mean(x, axis=(1, 2))  # Average over spatial dims
+        # Preserve spatial information
+        x = einops.rearrange(x, "c h w -> (c h w)")
         x = self.final(x)
         scale, shift = jnp.split(x, 2)
         scale = scale.reshape(28, 28)
         shift = shift.reshape(28, 28)
-        scale = 2 * jnp.tanh(scale/2)  # Clamps scale factors to [-1,1] more gradually
+        scale = 2 * jnp.tanh(scale/2)
         return scale, shift
 
 class CouplingLayer(eqx.Module):
     net: ConvNet
     mask: Array
 
-    def __init__(self, channels: int, key: PRNGKeyArray):
+    def __init__(self, channels: int, key: PRNGKeyArray, layer_id: int):
         net_key, mask_key = jax.random.split(key)
-        mask = jnp.zeros((28, 28))
-        mask = mask.at[::2, ::2].set(1.0)
-        mask = mask.at[1::2, 1::2].set(1.0)
-        self.mask = mask
+        # Alternate between vertical and horizontal splits
+        if layer_id % 2 == 0:
+            self.mask = jnp.concatenate([
+                jnp.ones((28, 14)),
+                jnp.zeros((28, 14))
+            ], axis=1)
+        else:
+            self.mask = jnp.concatenate([
+                jnp.ones((14, 28)),
+                jnp.zeros((14, 28))
+            ], axis=0)
         self.net = ConvNet(channels, channels, net_key)
 
     def forward(self, x):
@@ -81,7 +87,7 @@ class NormalizingFlow(eqx.Module):
     def __init__(self, n_layers: int, channels: int, key: PRNGKeyArray):
         keys = jax.random.split(key, n_layers)
         self.layers = tuple(
-            CouplingLayer(channels, k) for k in keys
+            CouplingLayer(channels, k, i) for i, k in enumerate(keys)
         )
 
     def _forward(self, x):
@@ -129,6 +135,6 @@ class NormalizingFlow(eqx.Module):
     def load(cls, filename):
         with open(filename, "rb") as f:
             return eqx.tree_deserialise_leaves(f, cls(
-                n_layers=4, channels=1,
+                n_layers=8, channels=1,
                 key=jax.random.PRNGKey(0)
             ))
