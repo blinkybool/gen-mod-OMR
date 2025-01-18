@@ -56,7 +56,6 @@ def main(
     Path("wandb").mkdir(exist_ok=True)
 
     run = wandb.init(
-        mode="disabled",
         project=wandb_project,
         entity=wandb_entity,
         config={
