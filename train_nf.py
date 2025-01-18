@@ -1,3 +1,7 @@
+import tempfile
+from pathlib import Path
+from typing import Tuple
+
 import einops
 import equinox as eqx
 import jax
@@ -5,11 +9,11 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 import tqdm
-import wandb
-from pathlib import Path
-import tempfile
+from jaxtyping import Array, Float
 
+import wandb
 from normalizing_flow import NormalizingFlow
+
 
 def get_platform():
     """Returns the current hardware platform (cpu, gpu, or tpu)"""
@@ -25,10 +29,14 @@ def configure_platform():
         print(f"Using jax {platform}")
 
 def generate_samples(model, key, num_samples):
-    """Generate samples using vmap to handle batching"""
+    """Generate samples using vmap"""
     keys = jax.random.split(key, num_samples)
-    samples, _ = jax.vmap(model.sample)(keys)  # Ignore returned RNGs
+    samples = jax.vmap(lambda k: model.sample(k)[0])(keys)
     return samples
+
+def bits_per_dim(log_probs: Float[Array, "..."], shape: Tuple[int, ...]) -> Float[Array, "..."]:
+    """Convert log probabilities to bits per dimension"""
+    return -log_probs * jnp.log2(jnp.e) / (shape[-3] * shape[-2] * shape[-1])
 
 def main(
     n_layers: int = 12,
@@ -48,6 +56,7 @@ def main(
     Path("wandb").mkdir(exist_ok=True)
 
     run = wandb.init(
+        mode="disabled",
         project=wandb_project,
         entity=wandb_entity,
         config={
@@ -70,7 +79,7 @@ def main(
         with np.load("mnist.npz") as data:
             x_train = jnp.array(data["x_train"].astype(np.int32))
             x_test = jnp.array(data["x_test"].astype(np.int32))
-        # Convert to CHW format
+        # Convert to NCHW format
         x_train = einops.rearrange(x_train, "b h w -> b 1 h w")
         x_test = einops.rearrange(x_test, "b h w -> b 1 h w")
 
@@ -80,35 +89,39 @@ def main(
         print("Initializing model/optimizer...")
         key, model_key = jax.random.split(key)
         model = NormalizingFlow(n_layers=n_layers, key=model_key)
-        optimizer = optax.adam(learning_rate)
-        opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
 
-        def log_prob_batch(model, x, rng):
-            """Compute log prob for a single example"""
-            # Remove batch dimension for individual processing
-            x = einops.rearrange(x, "1 c h w -> c h w")
-            return model.log_prob(x, rng)
+        # Add learning rate schedule and gradient clipping
+        lr_schedule = optax.exponential_decay(
+            init_value=learning_rate,
+            transition_steps=num_batches,
+            decay_rate=0.99,
+            end_value=0.01 * learning_rate
+        )
+        optimizer = optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adam(lr_schedule)
+        )
+        opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
 
         @jax.jit
         def compute_batch_loss(model, batch, rng):
-            """Compute loss for a batch using scan instead of vmap"""
+            """Compute bits per dimension loss for a batch"""
             keys = jax.random.split(rng, batch.shape[0])
-            def body_fun(carry, args):
-                x, key = args
-                log_prob, _ = log_prob_batch(model, x[None], key)
-                return carry, log_prob
-            _, log_probs = jax.lax.scan(body_fun, None, (batch, keys))
-            return -jnp.mean(log_probs), rng
+            log_probs = jax.vmap(lambda x, k: model.log_prob(x, k))(batch, keys)
+            return bits_per_dim(-jnp.mean(log_probs), batch.shape), rng
 
         @jax.jit
         def train_step(model, opt_state, batch, rng):
             """Single training step"""
-            (loss, rng), grads = eqx.filter_value_and_grad(compute_batch_loss, has_aux=True)(model, batch, rng)
+            (loss, rng), grads = eqx.filter_value_and_grad(
+                compute_batch_loss, has_aux=True
+            )(model, batch, rng)
             updates, opt_state = optimizer.update(grads, opt_state)
             model = eqx.apply_updates(model, updates)
             return model, opt_state, loss, rng
 
         print("Beginning training...")
+        best_val_bpd = float('inf')
 
         for epoch in range(num_epochs):
             key, shuffle_key = jax.random.split(key)
@@ -125,36 +138,52 @@ def main(
                 end = start + batch_size
                 batch = x_train_shuffled[start:end]
 
-                model, opt_state, loss, key = train_step(model, opt_state, batch, key)
+                model, opt_state, bpd, key = train_step(model, opt_state, batch, key)
 
                 wandb.log({
-                    "training/batch_loss": float(loss),
+                    "training/batch_bpd": float(bpd),
                     "training/epoch": epoch,
                     "training/batch": batch_idx,
                     "training/progress": (epoch * num_batches + batch_idx) / (num_epochs * num_batches)
                 })
 
-                epoch_losses.append(float(loss))
-                pbar.set_postfix({"loss": f"{float(loss):.4f}"})
+                epoch_losses.append(float(bpd))
+                pbar.set_postfix({"bpd": f"{float(bpd):.4f}"})
 
-            # Log epoch-level metrics and images
-            avg_epoch_loss = sum(epoch_losses) / len(epoch_losses)
+            # Regular evaluation
+            avg_train_bpd = sum(epoch_losses) / len(epoch_losses)
             key, val_key = jax.random.split(key)
-            val_loss, _ = compute_batch_loss(model, x_test, val_key)
+            val_keys = jax.random.split(val_key, len(x_test))
+            val_log_probs = jax.vmap(lambda x, k: model.log_prob(x, k))(x_test, val_keys)
+            val_bpd = bits_per_dim(-val_log_probs, x_test.shape)
+            val_bpd_mean = float(val_bpd.mean())
 
             # Generate samples
             key, sample_key = jax.random.split(key)
             samples = generate_samples(model, sample_key, num_vis_samples)
 
             wandb.log({
-                "epoch/train_loss": avg_epoch_loss,
-                "epoch/val_loss": val_loss,
+                "epoch/train_bpd": avg_train_bpd,
+                "epoch/val_bpd": val_bpd_mean,
                 "epoch": epoch,
                 "samples": [
                     wandb.Image(np.array(img.squeeze()))
                     for img in samples
                 ],
             })
+
+            # Save best model based on validation BPD
+            if val_bpd_mean < best_val_bpd:
+                best_val_bpd = val_bpd_mean
+                best_path = run_dir / "nf_best.eqx"
+                model.save(best_path)
+                artifact = wandb.Artifact(
+                    name="model-best",
+                    type="model",
+                    description=f"Best model (val_bpd={best_val_bpd:.4f})"
+                )
+                artifact.add_file(str(best_path))
+                run.log_artifact(artifact)
 
             # Save checkpoint every 5 epochs directly to wandb (no local save)
             if (epoch + 1) % 5 == 0:

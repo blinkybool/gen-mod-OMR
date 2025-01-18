@@ -65,3 +65,10 @@ uv run gen_vae.py --model-path runs/vae/<run_id>/vae_final.eqx --mode interpolat
 - PCA for visualising clusters of latent space that correspond to images
 - NFs might converge on one mode
 - Mode collapse
+
+
+## Ideas
+- Try different latent space for VAE (dim=16)
+  - Try limit testing it to find intrinsic dimensionality
+
+- Sum of gaussians doesn't simplify in objective functions

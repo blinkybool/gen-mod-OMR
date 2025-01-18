@@ -1,134 +1,122 @@
-from pathlib import Path
-
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import numpy as np
-
+import equinox as eqx
 from normalizing_flow import NormalizingFlow
+import einops
 
+def debug_model():
+    print("=== Starting Debug ===")
 
-def load_single_mnist_image() -> jnp.ndarray:
-    """Load single MNIST image with shape (1,28,28)"""
-    with np.load("mnist.npz") as data:
-        x = jnp.array(data["x_train"][0].astype("float32") / 255.0)
-    x = x.reshape(1, 28, 28)  # Single channel image
-    x = 2 * x - 1  # Scale to [-1, 1]
-    return x
+    # 1. Test model initialization
+    print("\n1. Testing model initialization...")
+    key = jax.random.PRNGKey(0)
+    try:
+        model = NormalizingFlow(n_layers=2, key=key)
+        print("✓ Model initialization successful")
+    except Exception as e:
+        print("✗ Model initialization failed:", e)
+        return
 
-def save_images(imgs: jnp.ndarray, path: str, title: str = None):
-    """
-    Save multiple images in a row
-    Args:
-        imgs: Array of shape (N,1,28,28) in range [-1,1]
-    """
-    # Scale from [-1,1] to [0,1] for display
-    imgs = (imgs + 1) / 2
-    imgs = np.clip(imgs, 0, 1)
+    # 2. Create test batch
+    print("\n2. Creating test batch...")
+    batch_size = 2
+    try:
+        # Create a small batch in NCHW format and convert to float32
+        batch = jnp.ones((batch_size, 1, 28, 28), dtype=jnp.int32)
+        print(f"✓ Test batch created with shape: {batch.shape}, dtype: {batch.dtype}")
+    except Exception as e:
+        print("✗ Test batch creation failed:", e)
+        return
 
-    n = len(imgs)
-    fig, axes = plt.subplots(1, n, figsize=(2*n, 2))
-    if n == 1:
-        axes = [axes]
-    if title:
-        fig.suptitle(title)
+    # 3. Test single example log_prob
+    print("\n3. Testing single example log_prob...")
+    try:
+        key, subkey = jax.random.split(key)
+        single_x = batch[0]  # Take first example
+        print(f"Single example shape: {single_x.shape}")
+        log_prob = model.log_prob(single_x, subkey)
+        print(f"✓ Log prob computation successful: {log_prob}")
+    except Exception as e:
+        print("✗ Log prob computation failed:", e)
+        import traceback
+        traceback.print_exc()
+        return
 
-    for i, ax in enumerate(axes):
-        ax.imshow(imgs[i].squeeze(), cmap='gray')
-        ax.axis('off')
+    # 4. Test batch processing
+    print("\n4. Testing batch processing...")
+    try:
+        key, subkey = jax.random.split(key)
+        keys = jax.random.split(subkey, batch_size)
 
-    plt.savefig(path, bbox_inches='tight', pad_inches=0.1)
-    plt.close()
+        def single_example_loss(x_and_key):
+            x, key = x_and_key
+            print(f"Shape before reshape: {x.shape}")
+            x_single = x.reshape(1, 28, 28)  # Ensure (c,h,w) format
+            print(f"Shape after reshape: {x_single.shape}")
+            return model.log_prob(x_single, key)
 
-def test_single_transform():
-    """Test single image transformation"""
-    print("\nTesting single image transform...")
+        # Test single example first
+        test_x, test_key = batch[0], keys[0]
+        print(f"Testing single example processing...")
+        single_result = single_example_loss((test_x, test_key))
+        print(f"Single example result: {single_result}")
 
-    # Initialize model
-    key = jax.random.key(42)
-    model = NormalizingFlow(n_layers=8, channels=1, key=key)
+        # Then test vmap
+        print(f"Testing vmap over batch...")
+        log_probs = jax.vmap(single_example_loss)((batch, keys))
+        print(f"✓ Batch processing successful, log_probs shape: {log_probs.shape}")
 
-    # Load single image
-    x = load_single_mnist_image()
-    print("Input shape:", x.shape)
+    except Exception as e:
+        print("✗ Batch processing failed:", e)
+        import traceback
+        traceback.print_exc()
+        return
 
-    # Forward pass
-    z, log_det = model.forward(x)
-    print("Forward shape:", z.shape)
-    print("Log det:", log_det)
+    # 5. Test gradient computation
+    print("\n5. Test gradient computation...")
+    try:
+        key, subkey = jax.random.split(key)
+        keys = jax.random.split(subkey, batch_size)
 
-    # Inverse pass
-    x_recon = model.inverse(z)
-    print("Reconstruction shape:", x_recon.shape)
-    print("Reconstruction error:", jnp.abs(x - x_recon).mean())
+        def compute_batch_loss(model, batch, keys):
+            log_probs = jax.vmap(lambda x, k: model.log_prob(x, k))(batch, keys)
+            return -jnp.mean(log_probs)
 
-    # Save results
-    save_images(x[None], "test_outputs/original.png", "Original")
-    save_images(x_recon[None], "test_outputs/reconstruction.png", "Reconstruction")
+        value, grads = eqx.filter_value_and_grad(
+            lambda m: compute_batch_loss(m, batch, keys)
+        )(model)
+        print("✓ Gradient computation successful")
+        print(f"Loss value: {value}")
 
-def test_batch_transform():
-    """Test batched transformation using vmap"""
-    print("\nTesting batched transform...")
+        # Print gradient structure
+        print("\nGradient structure:")
+        jax.tree_map(lambda x: print(f"Shape: {x.shape if hasattr(x, 'shape') else None}, Type: {type(x)}"), grads)
 
-    # Initialize model
-    key = jax.random.key(42)
-    model = NormalizingFlow(n_layers=8, channels=1, key=key)
+        # Check for None gradients
+        def check_grads(g, path=""):
+            if isinstance(g, dict):
+                for k, v in g.items():
+                    check_grads(v, f"{path}.{k}")
+            elif isinstance(g, (tuple, list)):
+                for i, v in enumerate(g):
+                    check_grads(v, f"{path}[{i}]")
+            else:
+                if g is None:
+                    print(f"✗ Found None gradient at {path}")
+                    return False
+            return True
 
-    # Load batch of images
-    with np.load("mnist.npz") as data:
-        x_batch = jnp.array(data["x_train"][:5].astype("float32") / 255.0)
-    x_batch = x_batch.reshape(-1, 1, 28, 28)
-    x_batch = 2 * x_batch - 1
-    print("Batch input shape:", x_batch.shape)
+        all_good = check_grads(grads)
+        if all_good:
+            print("✓ No None gradients found")
 
-    # Create batched versions of forward and inverse
-    batch_forward = jax.vmap(model.forward)
-    batch_inverse = jax.vmap(model.inverse)
+    except Exception as e:
+        print("✗ Gradient computation failed:", e)
+        import traceback
+        traceback.print_exc()
+        return
 
-    # Forward pass
-    z_batch, log_dets = batch_forward(x_batch)
-    print("Batch forward shape:", z_batch.shape)
-    print("Batch log dets shape:", log_dets.shape)
-
-    # Inverse pass
-    x_recon_batch = batch_inverse(z_batch)
-    print("Batch reconstruction shape:", x_recon_batch.shape)
-    print("Batch reconstruction error:", jnp.abs(x_batch - x_recon_batch).mean())
-
-    # Save results
-    save_images(x_batch, "test_outputs/batch_original.png", "Batch Original")
-    save_images(x_recon_batch, "test_outputs/batch_reconstruction.png", "Batch Reconstruction")
-
-def test_sampling():
-    """Test random sampling"""
-    print("\nTesting sampling...")
-
-    # Initialize model
-    key = jax.random.key(42)
-    model = NormalizingFlow(n_layers=8, channels=1, key=key)
-
-    # Single sample
-    sample_key = jax.random.key(0)
-    sample = model.sample(sample_key, shape=(1, 28, 28))
-    print("Single sample shape:", sample.shape)
-
-    # Batch of samples
-    batch_sample = jax.vmap(lambda k: model.sample(k, (1, 28, 28)))
-    keys = jax.random.split(sample_key, 5)
-    samples = batch_sample(keys)
-    print("Batch samples shape:", samples.shape)
-
-    # Save results
-    save_images(samples, "test_outputs/samples.png", "Random Samples")
-
-def main():
-    # Create output directory
-    Path("test_outputs").mkdir(exist_ok=True)
-
-    # Run tests
-    test_single_transform()
-    test_batch_transform()
-    test_sampling()
+    print("\n=== Debug Complete ===")
 
 if __name__ == "__main__":
-    main()
+    debug_model()
