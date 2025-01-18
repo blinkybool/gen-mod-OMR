@@ -60,10 +60,10 @@ def evaluate_in_batches(model, x_test, batch_size, key):
     return jnp.concatenate(all_bpds)
 
 def main(
-    n_layers: int = 12,
-    learning_rate: float = 3e-4,
-    batch_size: int = 256,
-    num_epochs: int = 100,
+    n_layers: int = 8,
+    learning_rate: float = 1e-3,
+    batch_size: int = 128,
+    num_epochs: int = 200,
     num_vis_samples: int = 10,
     seed: int = 42,
     output_folder: Path = Path("runs/nf"),
