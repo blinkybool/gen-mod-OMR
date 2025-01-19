@@ -4,3 +4,4 @@ __pycache__
 /runs
 models/
 .DS_Store
+plots/

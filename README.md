@@ -16,15 +16,10 @@ Core capabilities:
 
 # Results
 
-Here are various plots and generated images for the VAE model.
+Here are generated images for the VAE model trained on MNIST, plus a 2D slice of the latent space (dim=32).
 
-![](plots/swift-durian-10/generated-105.png)
-![](plots/swift-durian-10/pca.png)
-![](plots/swift-durian-10/distance_matrix.png)
-![](plots/swift-durian-10/pca_0_1.png)
-![](plots/swift-durian-10/interpolation_0to1.png)
-![](plots/swift-durian-10/pca_7_9.png)
-![](plots/swift-durian-10/interpolation_7to9.png)
+![](generated-105.png)
+![](pca.png)
 
 # Setup
 Install [uv](https://github.com/astral-sh/uv) (fast pip alternative)
