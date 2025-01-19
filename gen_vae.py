@@ -3,13 +3,17 @@ Generate samples from a trained VAE model.
 """
 
 
+from pathlib import Path
+
+import einops
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float
-import numpy as np
-from pathlib import Path
 import matplotlib.pyplot as plt
-import einops
+import numpy as np
+from jaxtyping import Array, Float
+from jaxtyping import Array, Float
+from jaxtyping import Array, Float
+from jaxtyping import Array, Float
 
 from vae import VAE, vis_samples
 
@@ -29,6 +33,7 @@ def interpolate(
 def main(
     model_path: str = "vae_final.eqx",
     num_samples: int = 9,
+    num_columns: int = 3,
     seed: int = 42,
     mode: str = "random",  # "random", "interpolate", or "reconstruct"
     output_path: Path | None = None,
@@ -47,9 +52,34 @@ def main(
         samples = jax.vmap(model.decoder)(
             jax.random.normal(sample_key, (num_samples, latent_dim))
         )
-        plot = vis_samples(samples, columns=3)
-        print("\nRandom samples:")
-        print(plot)
+
+        # Create figure for random samples
+        n_cols = num_columns
+        n_rows = (num_samples + n_cols - 1) // n_cols  # Ceiling division
+        fig, axs = plt.subplots(n_rows, n_cols, figsize=(2*n_cols, 2*n_rows))
+
+        # Make axs 2D if it's 1D
+        if n_rows == 1:
+            axs = axs.reshape(1, -1)
+        elif n_cols == 1:
+            axs = axs.reshape(-1, 1)
+
+        for i in range(num_samples):
+            row = i // n_cols
+            col = i % n_cols
+            axs[row, col].imshow(samples[i].squeeze(), cmap='gray')
+            axs[row, col].axis('off')
+
+        # Turn off any unused subplots
+        for i in range(num_samples, n_rows * n_cols):
+            row = i // n_cols
+            col = i % n_cols
+            axs[row, col].axis('off')
+
+        plt.tight_layout()
+        if output_path is not None:
+            plt.savefig(output_path, bbox_inches='tight', pad_inches=0.5, dpi=150)
+        plt.close()
 
     elif mode == "interpolate":
         # Generate interpolation between two random points
@@ -57,9 +87,20 @@ def main(
         z1 = jax.random.normal(z1_key, (latent_dim,))
         z2 = jax.random.normal(z2_key, (latent_dim,))
         samples = interpolate(model, z1, z2)
-        plot = vis_samples(samples, columns=3)  # Show all in one row
-        print("\nInterpolation:")
-        print(plot)
+
+        # Create figure for interpolation
+        n = len(samples)
+        fig, axs = plt.subplots(1, n, figsize=(2*n, 2))
+        fig.suptitle('VAE Latent Space Interpolation', fontsize=14, y=0.95)
+
+        for i in range(n):
+            axs[i].imshow(samples[i].squeeze(), cmap='gray')
+            axs[i].axis('off')
+
+        plt.tight_layout()
+        if output_path is not None:
+            plt.savefig(output_path, bbox_inches='tight', pad_inches=0.5, dpi=150)
+        plt.close()
 
     elif mode == "reconstruct":
         # Load and reconstruct MNIST test images
@@ -76,9 +117,6 @@ def main(
 
         # Stack originals and reconstructions
         samples = jnp.concatenate([test_images, recons])
-        plot = vis_samples(samples, columns=num_samples)
-        print("\nReconstructions (top: original, bottom: reconstructed):")
-        print(plot)
 
         if output_path is not None:
             n=num_samples
