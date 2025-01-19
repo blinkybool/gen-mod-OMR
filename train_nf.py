@@ -38,11 +38,32 @@ def bits_per_dim(log_probs: Float[Array, "..."], shape: Tuple[int, ...]) -> Floa
     """Convert log probabilities to bits per dimension"""
     return -log_probs * jnp.log2(jnp.e) / (shape[-3] * shape[-2] * shape[-1])
 
+def evaluate_in_batches(model, x_test, batch_size, key):
+    num_test_batches = len(x_test) // batch_size + (1 if len(x_test) % batch_size != 0 else 0)
+    all_bpds = []
+
+    for i in range(num_test_batches):
+        start_idx = i * batch_size
+        end_idx = min(start_idx + batch_size, len(x_test))
+        batch = x_test[start_idx:end_idx]
+
+        # Generate keys for this batch
+        batch_keys = jax.random.split(key, batch.shape[0])
+        key = jax.random.fold_in(key, i)  # Get different keys for next batch
+
+        # Compute log probs for batch
+        batch_log_probs = jax.vmap(lambda x, k: model.log_prob(x, k))(batch, batch_keys)
+        batch_bpd = bits_per_dim(-batch_log_probs, batch.shape)
+        all_bpds.append(batch_bpd)
+
+    # Concatenate all results
+    return jnp.concatenate(all_bpds)
+
 def main(
-    n_layers: int = 12,
-    learning_rate: float = 3e-4,
-    batch_size: int = 256,
-    num_epochs: int = 100,
+    n_layers: int = 8,
+    learning_rate: float = 1e-3,
+    batch_size: int = 128,
+    num_epochs: int = 200,
     num_vis_samples: int = 10,
     seed: int = 42,
     output_folder: Path = Path("runs/nf"),
@@ -56,7 +77,6 @@ def main(
     Path("wandb").mkdir(exist_ok=True)
 
     run = wandb.init(
-        mode="disabled",
         project=wandb_project,
         entity=wandb_entity,
         config={
@@ -153,9 +173,7 @@ def main(
             # Regular evaluation
             avg_train_bpd = sum(epoch_losses) / len(epoch_losses)
             key, val_key = jax.random.split(key)
-            val_keys = jax.random.split(val_key, len(x_test))
-            val_log_probs = jax.vmap(lambda x, k: model.log_prob(x, k))(x_test, val_keys)
-            val_bpd = bits_per_dim(-val_log_probs, x_test.shape)
+            val_bpd = evaluate_in_batches(model, x_test, batch_size, val_key)
             val_bpd_mean = float(val_bpd.mean())
 
             # Generate samples
