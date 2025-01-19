@@ -2,3 +2,5 @@ __pycache__
 *.npz
 /wandb
 /runs
+models/
+.DS_Store
