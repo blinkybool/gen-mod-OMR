@@ -1,5 +1,31 @@
 # Generative Modelling - OMR
 
+This repository provides implementations of generative models for studying the probabilistic modeling of MNIST digits. The work focuses on two fundamental approaches:
+
+- A Variational Autoencoder (VAE) that constructs a lower-dimensional probabilistic latent representation of digit images through maximization of the evidence lower bound (ELBO), enabling both compression and reconstruction
+
+- A Normalizing Flow (NF) model that learns a bijective mapping between the image distribution and a tractable base distribution via a sequence of invertible transformations, permitting direct likelihood computation and sampling
+
+The codebase contains implementations for training, generation, and analysis of the latent representations and sampling characteristics. Core functionality is implemented in JAX/Equinox, with visualization via matplotlib/seaborn and experiment tracking through Weights & Biases.
+
+Core capabilities:
+- Efficient model optimization on TPU and GPU architectures
+- Visualization tools for examining generated samples and latent space interpolation
+- Latent space analysis via dimensionality reduction and clustering techniques
+- Investigation of mode collapse phenomena and intrinsic dimensionality
+
+# Results
+
+Here are various plots and generated images for the VAE model.
+
+![](plots/swift-durian-10/generated-105.png)
+![](plots/swift-durian-10/pca.png)
+![](plots/swift-durian-10/distance_matrix.png)
+![](plots/swift-durian-10/pca_0_1.png)
+![](plots/swift-durian-10/interpolation_0to1.png)
+![](plots/swift-durian-10/pca_7_9.png)
+![](plots/swift-durian-10/interpolation_7to9.png)
+
 # Setup
 Install [uv](https://github.com/astral-sh/uv) (fast pip alternative)
 
